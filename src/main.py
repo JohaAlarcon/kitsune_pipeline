@@ -5,6 +5,7 @@ import pandas as pd
 from datetime import datetime
 import time
 import logging
+from unidecode import unidecode
 
 class CongresoChileScraper:
     def __init__(self):
@@ -157,6 +158,7 @@ class CongresoChileScraper:
                 return pd.DataFrame(proyectos)
             return pd.DataFrame()
 
+
     def combinar_datos(self, df_senado, df_bnc):
         """Combina los datos de ambas fuentes en un solo DataFrame"""
         logging.info('Combinando datos de ambas fuentes...')
@@ -173,6 +175,54 @@ class CongresoChileScraper:
                 df_final = pd.concat([df_final, df_bnc], axis=0, ignore_index=True)
 
         return df_final
+
+    def limpiar_estandarizar_datos(self, df_final: pd.DataFrame) -> pd.DataFrame:
+        try:
+            df_clean = df_final.copy()
+
+            # Estandariza nombres de columnas (minúsculas y sin acentos)
+            df_clean.columns = [normalize_text(col) for col in df_clean.columns]
+            logging.info("Nombres de columnas normalizados")
+
+            if 'fecha' in df_clean.columns:
+                def convert_date(date_str):
+                    try:
+                        months_esp = {
+                            'ENE': '01', 'FEB': '02', 'MAR': '03', 'ABR': '04',
+                            'MAY': '05', 'JUN': '06', 'JUL': '07', 'AGO': '08',
+                            'SEP': '09', 'OCT': '10', 'NOV': '11', 'DIC': '12'
+                        }
+
+                        if isinstance(date_str, str) and '-' in date_str and any(month in date_str.upper() for month in months_esp):
+                            day, month, year = date_str.upper().split('-')
+                            month = months_esp[month]
+                            return f"{year}-{month}-{day.zfill(2)}"
+
+                        return pd.to_datetime(date_str, dayfirst=True).strftime('%Y-%m-%d')
+
+                    except Exception as e:
+                        logging.warning(f"Error processing date {date_str}: {str(e)}")
+                        return date_str
+
+                df_clean['fecha'] = df_clean['fecha'].apply(convert_date)
+                logging.info("Fechas estandarizadas al formato yyyy-mm-dd")
+
+                # Convert specified columns to lowercase
+                for col in ['titulo', 'organismo', 'tipo']:
+                    if col in df_clean.columns:
+                        df_clean[col] = df_clean[col].str.lower()
+
+                # Add quotes to the 'titulo' field
+                if 'titulo' in df_clean.columns:
+                    df_clean['titulo'] = df_clean['titulo'].apply(
+                        lambda x: f'"{x}"' if not pd.isna(x) else x
+                    )
+                    logging.info("Títulos procesados con comillas")
+            return df_clean
+
+        except Exception as e:
+            logging.error(f"Error en limpieza de datos: {str(e)}")
+            raise
 
     def guardar_datos(self, df, nombre_base):
         """guarda los datos en diferentes formatos dentro del directorio files"""
@@ -206,8 +256,12 @@ class CongresoChileScraper:
         # Imprimir estadísticas básicas
         print("\nEstadísticas de los datos:")
         print(f"Total de registros: {len(df)}")
-        print("\nDistribución por Organismo:")
-        print(df['Organismo'].value_counts())
+        print("\nDistribución por organismo:")
+        print(df['organismo'].value_counts())
+
+def normalize_text(text: str) -> str:
+    """Normaliza texto: remueve acentos y convierte a minúsculas"""
+    return unidecode(text).lower().strip()
 
 def main():
     # crear una instancia de scraper
@@ -225,6 +279,10 @@ def main():
     #combinar los datos en un solo DataFrame
     df_final = scraper.combinar_datos(df_senado, df_bnc)
     print(f"Datos combinados: {len(df_final)} registros")
+
+    #limpiar y estandarizar los datos
+    df_final = scraper.limpiar_estandarizar_datos(df_final)
+    print(f"Datos limpios y estandarizados: {len(df_final)} registros")
 
     #Guardar los datos
     scraper.guardar_datos(df_final, 'datos_legislacion_chile')
