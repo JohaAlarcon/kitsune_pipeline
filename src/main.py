@@ -7,7 +7,7 @@ import time
 import logging
 from unidecode import unidecode
 
-class CongresoChileScraper:
+class ChileCongressScraper:
     def __init__(self):
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
@@ -21,9 +21,9 @@ class CongresoChileScraper:
             format='%(asctime)s - %(levelname)s - %(message)s'
         )
 
-    def obtener_datos_senado(self, fecha_inicio='01/01/2023', fecha_fin='31/12/2023'):
-        """Obtiene los datos de la pagina del senado"""
-        logging.info('Obteniendo datos del senado...')
+    def get_senado_data(self, fecha_inicio='01/01/2023', fecha_fin='31/12/2023'):
+        """Get data from the Senate website"""
+        logging.info('Getting Senate data...')
         proyectos = []
         base_url = 'https://tramitacion.senado.cl/appsenado/index.php'
         params = {
@@ -39,21 +39,21 @@ class CongresoChileScraper:
 
             soup = BeautifulSoup(response.text, 'html.parser')
 
-            #buscar la tabla de proyectos
+            # Find the projects table
             tabla_proyectos = soup.find('table', {'id':'grid_nivel2'})
 
             if tabla_proyectos and isinstance(tabla_proyectos, Tag):
-                #obtener encabezados
+                # Get headers
                 encabezados =[]
                 filas= tabla_proyectos.find_all('tr')
 
-                #procesar cada fila de proyectos
+                # Process each project row
                 for idFila, fila in enumerate(filas):
                     datos_fila={}
                     columnas = fila.find_all('td')
 
                     if idFila == 0:
-                        #Extraer encabezados
+                        # Extract headers
                         for columna in columnas:
                             encabezados.append(columna.text.strip())
                     else:
@@ -71,14 +71,14 @@ class CongresoChileScraper:
             return pd.DataFrame(proyectos)
 
         except Exception as e:
-                logging.error(f"Error al obtener datos del senado: {e}")
+                logging.error(f"Error getting Senate data: {e}")
                 return pd.DataFrame(proyectos)
 
-    def obtener_datos_bnc(self, fecha_inicio='2023-01-01', fecha_fin='2023-01-10',
+    def get_bnc_data(self, fecha_inicio='2023-01-01', fecha_fin='2023-01-10',
     items_por_pagina=1000):
 
-        """obtiene los datos de la pagina de la BNC usando la API con manejo de paginacion"""
-        logging.info ('Obteniendo datos de la BNC...')
+        """Get data from the BNC website using the API with pagination"""
+        logging.info ('Getting BNC data...')
 
         url = 'https://nuevo.leychile.cl/servicios/Consulta/listaresultadosavanzada'
         base_params = {
@@ -100,28 +100,28 @@ class CongresoChileScraper:
 
         try:
             while True:
-                #actualizar numero de pagina en los parametros
+                # Update page number in parameters
                 params= base_params.copy()
                 params['npagina'] = pagina_actual
 
-                #Realizar la petición
+                # Make the request
                 response = requests.get(url,params=params, headers=self.headers)
                 response.raise_for_status()
                 data = response.json()
 
-                #verficar que tenemos datos validos
+                # Verify that we have valid data
                 if not data or len(data) < 2:
-                    logging.error('Formato de respuesta inesperado de la API de la BNC')
+                    logging.error('Unexpected response format from the BNC API')
                     break
 
-                #extraer los items de la primera posicion
+                # Extract items from the first position
                 items = data[0]
 
-                #Extraer informacion de paginacion de la segunda posicion
+                # Extract pagination info from the second position
                 info_paginacion = data[1]
                 total_items = info_paginacion.get('totalitems',0)
 
-                #porcesar los items de la paginacion actual
+                # Process items on the current page
                 for item in items:
                     proyecto = {
                         'Número': item.get('IDNORMA', ''),
@@ -132,37 +132,37 @@ class CongresoChileScraper:
                     }
                     proyectos.append(proyecto)
 
-                #Registrar progreso
+                # Log progress
                 items_obtenidos = len(proyectos)
-                logging.info(f'procesada pagina {pagina_actual} items obtenidos hasta ahora {items_obtenidos} / {total_items}')
-                print(f'Procesando datos de BNC: {items_obtenidos} / {total_items}')
+                logging.info(f'Processed page {pagina_actual} items obtained so far {items_obtenidos} / {total_items}')
+                print(f'Processing BNC data: {items_obtenidos} / {total_items}')
 
-                #verificar si hay mas paginas
+                # Check if there are more pages
                 if items_obtenidos >= total_items:
                     break
 
-                #preparar para la siguiente pagina
+                # Prepare for the next page
                 pagina_actual += 1
 
-                #pausa para no sobrecargar el servidor
+                # Pause to avoid overloading the server
                 time.sleep(0.5)
 
-            logging.info(f'Extracion de BNC completada. Total de items obtenidos: {len(proyectos)}')
+            logging.info(f'BNC extraction completed. Total items obtained: {len(proyectos)}')
             return pd.DataFrame(proyectos)
 
         except Exception as e:
-            logging.error(f'Error al obtener datos de la BNC: {e}')
-            #Si tenemos proyectos, los devolvemos apesar del error
+            logging.error(f'Error getting BNC data: {e}')
+            # If we have projects, return them despite the error
             if proyectos:
-                logging.warning(f'devolviendo {len(proyectos)} proyectos obtenidos antes del error')
+                logging.warning(f'Returning {len(proyectos)} projects obtained before the error')
                 return pd.DataFrame(proyectos)
             return pd.DataFrame()
 
 
-    def combinar_datos(self, df_senado, df_bnc):
-        """Combina los datos de ambas fuentes en un solo DataFrame"""
-        logging.info('Combinando datos de ambas fuentes...')
-        #combinar los DataFrames
+    def data_combine(self, df_senado, df_bnc):
+        """Combine data from both sources into a single DataFrame"""
+        logging.info('Combining data from both sources...')
+        # Combine DataFrames
         df_final = pd.DataFrame()
 
         if not df_senado.empty:
@@ -176,13 +176,13 @@ class CongresoChileScraper:
 
         return df_final
 
-    def limpiar_estandarizar_datos(self, df_final: pd.DataFrame) -> pd.DataFrame:
+    def clean_standardize_data(self, df_final: pd.DataFrame) -> pd.DataFrame:
         try:
             df_clean = df_final.copy()
 
-            # Estandariza nombres de columnas (minúsculas y sin acentos)
+            # Standardize column names (lowercase and without accents)
             df_clean.columns = [normalize_text(col) for col in df_clean.columns]
-            logging.info("Nombres de columnas normalizados")
+            logging.info("Column names normalized")
 
             if 'fecha' in df_clean.columns:
                 def convert_date(date_str):
@@ -205,7 +205,7 @@ class CongresoChileScraper:
                         return date_str
 
                 df_clean['fecha'] = df_clean['fecha'].apply(convert_date)
-                logging.info("Fechas estandarizadas al formato yyyy-mm-dd")
+                logging.info("Dates standardized to yyyy-mm-dd format")
 
                 # Convert specified columns to lowercase
                 for col in ['titulo', 'organismo', 'tipo']:
@@ -217,77 +217,76 @@ class CongresoChileScraper:
                     df_clean['titulo'] = df_clean['titulo'].apply(
                         lambda x: f'"{x}"' if not pd.isna(x) else x
                     )
-                    logging.info("Títulos procesados con comillas")
+                    logging.info("Titles processed with quotes")
             return df_clean
 
         except Exception as e:
-            logging.error(f"Error en limpieza de datos: {str(e)}")
+            logging.error(f"Error cleaning data: {str(e)}")
             raise
 
-    def guardar_datos(self, df, nombre_base):
-        """guarda los datos en diferentes formatos dentro del directorio files"""
-        # Crear directorio 'files' si no existe
+    def save_data(self, df, nombre_base):
+        """Save data in different formats inside the 'files' directory"""
+        # Create 'files' directory if it doesn't exist
         files_dir = 'files'
         os.makedirs(files_dir, exist_ok=True)
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         nombre_archivo = str(f'{nombre_base}_{timestamp}')
 
-        # Construir rutas completas
+        # Build full paths
         ruta_base = os.path.join(files_dir, nombre_archivo)
 
         try:
-            # Guardar en CSV
+            # Save as CSV
             df.to_csv(f'{ruta_base}.csv', index=False, encoding='utf-8-sig')
-            logging.info(f"Datos guardados en CSV: {ruta_base}.csv")
+            logging.info(f"Data saved as CSV: {ruta_base}.csv")
 
-            # Guardar en Excel
+            # Save as Excel
             # df.to_excel(f'{ruta_base}.xlsx', index=False)
-            # logging.info(f"Datos guardados en Excel: {ruta_base}.xlsx")
+            # logging.info(f"Data saved as Excel: {ruta_base}.xlsx")
 
-            # Guardar en JSON
+            # Save as JSON
             df.to_json(f'{ruta_base}.json', orient='records', force_ascii=False)
-            logging.info(f"Datos guardados en JSON: {ruta_base}.json")
+            logging.info(f"Data saved as JSON: {ruta_base}.json")
 
         except Exception as e:
-            logging.error(f"Error al guardar archivos: {str(e)}")
+            logging.error(f"Error saving files: {str(e)}")
             raise
 
-        # Imprimir estadísticas básicas
-        print("\nEstadísticas de los datos:")
-        print(f"Total de registros: {len(df)}")
-        print("\nDistribución por organismo:")
+        # Print basic statistics
+        print("\nData statistics:")
+        print(f"Total records: {len(df)}")
+        print("\nDistribution by organism:")
         print(df['organismo'].value_counts())
 
 def normalize_text(text: str) -> str:
-    """Normaliza texto: remueve acentos y convierte a minúsculas"""
+    """Normalize text: remove accents and convert to lowercase"""
     return unidecode(text).lower().strip()
 
 def main():
-    # crear una instancia de scraper
-    scraper = CongresoChileScraper()
-    print('Iniciando extraccion de datos...')
+    # Create an instance of the scraper
+    scraper = ChileCongressScraper()
+    print('Starting data extraction...')
 
-    # Obtener fuentes datos de la fuente del senado
-    df_senado = DataFrame = scraper.obtener_datos_senado()
-    print(f"Datos obtenidos del senado: {len(df_senado)} registros ")
+    # Get data from the Senate source
+    df_senado = scraper.get_senado_data()
+    print(f"Data obtained from the Senate: {len(df_senado)} records")
 
-    #obtener datos de la BNC
-    df_bnc = scraper.obtener_datos_bnc()
-    print(f"Datos obtenidos de la BNC: {len(df_bnc)} registros ")
+    # Get data from the BNC
+    df_bnc = scraper.get_bnc_data()
+    print(f"Data obtained from the BNC: {len(df_bnc)} records")
 
-    #combinar los datos en un solo DataFrame
-    df_final = scraper.combinar_datos(df_senado, df_bnc)
-    print(f"Datos combinados: {len(df_final)} registros")
+    # Combine data into a single DataFrame
+    df_final = scraper.data_combine(df_senado, df_bnc)
+    print(f"Combined data: {len(df_final)} records")
 
-    #limpiar y estandarizar los datos
-    df_final = scraper.limpiar_estandarizar_datos(df_final)
-    print(f"Datos limpios y estandarizados: {len(df_final)} registros")
+    # Clean and standardize the data
+    df_final = scraper.clean_standardize_data (df_final)
+    print(f"Cleaned and standardized data: {len(df_final)} records")
 
-    #Guardar los datos
-    scraper.guardar_datos(df_final, 'datos_legislacion_chile')
-    print('Proceso completo, revisa los rchivos generados')
-
+    # Save the data
+    scraper.save_data(df_final, 'chile_legislation_data')
+    print('Process complete, check the generated files')
 
 if __name__ == "__main__":
     main()
