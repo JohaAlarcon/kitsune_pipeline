@@ -7,3 +7,7 @@ sqlalchemy
 crate
 sqlalchemy-cratedb
 openai
+uvicorn
+fastapi
+pydantic
+python-dotenv
