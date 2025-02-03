@@ -1,12 +1,70 @@
 import os
 import requests
-from bs4 import BeautifulSoup, Tag
 import pandas as pd
-from datetime import datetime
 import time
 import logging
+import sqlalchemy as  sa
+from openai import OpenAI
+from sqlalchemy_cratedb.support import insert_bulk
+from bs4 import BeautifulSoup, Tag
+from datetime import datetime
 from unidecode import unidecode
 
+# Normalize text: remove accents and convert to lowercase
+def normalize_text(text: str) -> str:
+    """Normalize text: remove accents and convert to lowercase"""
+    return unidecode(text).lower().strip()
+
+# Convert date to yyyy-mm-dd format
+def convert_date(date_str):
+    try:
+        months_esp = {
+            'ENE': '01', 'FEB': '02', 'MAR': '03', 'ABR': '04',
+            'MAY': '05', 'JUN': '06', 'JUL': '07', 'AGO': '08',
+            'SEP': '09', 'OCT': '10', 'NOV': '11', 'DIC': '12'
+        }
+
+        if isinstance(date_str, str) and '-' in date_str and any(month in date_str.upper() for month in months_esp):
+            day, month, year = date_str.upper().split('-')
+            month = months_esp[month]
+            return f"{year}-{month}-{day.zfill(2)}"
+
+        return pd.to_datetime(date_str, dayfirst=True).strftime('%Y-%m-%d')
+
+    except Exception as e:
+        logging.warning(f"Error processing date {date_str}: {str(e)}")
+        return date_str
+
+# Initilize OpenAI API to generate categories
+client = OpenAI()
+def generate_category(title) :
+    """Generate a category  based on the content of the title using the OpenAI API"""
+    logging.info(f"Generating category for: {title}")
+    try:
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Eres un experto en categorizar temas a partir de un texto, por ejemplo, un texto que habla sobre petroleo y sus derivados, sera categorizado en hidrocarburos, devuelve la categoria en español y la menor cantidad de palabras posibles"
+                },
+                {
+                    "role": "user",
+                    "content": title
+                }
+            ]
+        )
+        category = completion.choices[0].message.content
+        logging.info(f"Generated category: {category}")
+
+        # Return None if category is empty, else replace spaces with underscores
+        return "_".join(category.split()) if category else None
+
+    except Exception as e:
+        logging.error(f"Error generating category: {str(e)}")
+        return 'No category'
+
+# Main scraper class
 class ChileCongressScraper:
     def __init__(self):
         self.headers = {
@@ -74,7 +132,7 @@ class ChileCongressScraper:
                 logging.error(f"Error getting Senate data: {e}")
                 return pd.DataFrame(proyectos)
 
-    def get_bnc_data(self, fecha_inicio='2023-01-01', fecha_fin='2023-01-10',
+    def get_bnc_data(self, fecha_inicio='2023-01-01', fecha_fin='2023-12-31',
     items_por_pagina=1000):
 
         """Get data from the BNC website using the API with pagination"""
@@ -158,7 +216,6 @@ class ChileCongressScraper:
                 return pd.DataFrame(proyectos)
             return pd.DataFrame()
 
-
     def data_combine(self, df_senado, df_bnc):
         """Combine data from both sources into a single DataFrame"""
         logging.info('Combining data from both sources...')
@@ -184,40 +241,28 @@ class ChileCongressScraper:
             df_clean.columns = [normalize_text(col) for col in df_clean.columns]
             logging.info("Column names normalized")
 
+            # Standardize date format
             if 'fecha' in df_clean.columns:
-                def convert_date(date_str):
-                    try:
-                        months_esp = {
-                            'ENE': '01', 'FEB': '02', 'MAR': '03', 'ABR': '04',
-                            'MAY': '05', 'JUN': '06', 'JUL': '07', 'AGO': '08',
-                            'SEP': '09', 'OCT': '10', 'NOV': '11', 'DIC': '12'
-                        }
-
-                        if isinstance(date_str, str) and '-' in date_str and any(month in date_str.upper() for month in months_esp):
-                            day, month, year = date_str.upper().split('-')
-                            month = months_esp[month]
-                            return f"{year}-{month}-{day.zfill(2)}"
-
-                        return pd.to_datetime(date_str, dayfirst=True).strftime('%Y-%m-%d')
-
-                    except Exception as e:
-                        logging.warning(f"Error processing date {date_str}: {str(e)}")
-                        return date_str
-
                 df_clean['fecha'] = df_clean['fecha'].apply(convert_date)
                 logging.info("Dates standardized to yyyy-mm-dd format")
 
-                # Convert specified columns to lowercase
-                for col in ['titulo', 'organismo', 'tipo']:
-                    if col in df_clean.columns:
-                        df_clean[col] = df_clean[col].str.lower()
+            # Convert specified columns to lowercase
+            for col in ['titulo', 'organismo', 'tipo']:
+                if col in df_clean.columns:
+                    df_clean[col] = df_clean[col].str.lower()
 
-                # Add quotes to the 'titulo' field
-                if 'titulo' in df_clean.columns:
-                    df_clean['titulo'] = df_clean['titulo'].apply(
-                        lambda x: f'"{x}"' if not pd.isna(x) else x
-                    )
-                    logging.info("Titles processed with quotes")
+            # Add quotes to the 'titulo' field
+            if 'titulo' in df_clean.columns:
+                df_clean['titulo'] = df_clean['titulo'].apply(
+                    lambda x: f'"{x}"' if not pd.isna(x) else x
+                )
+                logging.info("Titles processed with quotes")
+
+            # Generate a category based on the title
+            if 'titulo' in df_clean.columns:
+                df_clean['categoria'] = df_clean['titulo'].apply(generate_category)
+                logging.info("Categories generated based on titles")
+
             return df_clean
 
         except Exception as e:
@@ -241,13 +286,16 @@ class ChileCongressScraper:
             df.to_csv(f'{ruta_base}.csv', index=False, encoding='utf-8-sig')
             logging.info(f"Data saved as CSV: {ruta_base}.csv")
 
-            # Save as Excel
-            # df.to_excel(f'{ruta_base}.xlsx', index=False)
-            # logging.info(f"Data saved as Excel: {ruta_base}.xlsx")
-
             # Save as JSON
             df.to_json(f'{ruta_base}.json', orient='records', force_ascii=False)
             logging.info(f"Data saved as JSON: {ruta_base}.json")
+
+            # Load data into CrateDB
+            dburi = "crate://admin:<password>@kitsune-test.aks1.westeurope.azure.cratedb.net:4200?ssl=true"
+            engine = sa.create_engine(dburi, echo=True)
+            CHUNKSIZE = 1000
+            df.to_sql(name='crate', con=engine, if_exists='replace', index=False, chunksize=CHUNKSIZE, method=insert_bulk)
+            logging.info(f"Data loaded into CrateDB")
 
         except Exception as e:
             logging.error(f"Error saving files: {str(e)}")
@@ -258,10 +306,6 @@ class ChileCongressScraper:
         print(f"Total records: {len(df)}")
         print("\nDistribution by organism:")
         print(df['organismo'].value_counts())
-
-def normalize_text(text: str) -> str:
-    """Normalize text: remove accents and convert to lowercase"""
-    return unidecode(text).lower().strip()
 
 def main():
     # Create an instance of the scraper
@@ -277,15 +321,15 @@ def main():
     print(f"Data obtained from the BNC: {len(df_bnc)} records")
 
     # Combine data into a single DataFrame
-    df_final = scraper.data_combine(df_senado, df_bnc)
-    print(f"Combined data: {len(df_final)} records")
+    df_combined = scraper.data_combine(df_senado, df_bnc)
+    print(f"Combined data: {len(df_combined)} records")
 
     # Clean and standardize the data
-    df_final = scraper.clean_standardize_data (df_final)
-    print(f"Cleaned and standardized data: {len(df_final)} records")
+    df_cleaned = scraper.clean_standardize_data(df_combined)
+    print(f"Cleaned and standardized data: {len(df_cleaned)} records")
 
     # Save the data
-    scraper.save_data(df_final, 'chile_legislation_data')
+    scraper.save_data(df_cleaned, 'chile_legislation_data')
     print('Process complete, check the generated files')
 
 if __name__ == "__main__":
