@@ -71,7 +71,6 @@ async def get_projects():
             # Convert row objects to dictionaries
             projects = []
             for row in results:
-                print(f'ROW: {row}')
                 project_dict = {
                     'titulo': row[0],
                     'tipo': row[1],
